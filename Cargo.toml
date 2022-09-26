@@ -1,0 +1,12 @@
+[package]
+name = "couch_rs_test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+http = "0.2"
+couch_rs = "0.9"
+rand = "0.8"
+tokio-util = "0.7"
+log = "0.4"
+tokio = { version = "1", features = ["full"] }
