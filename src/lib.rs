@@ -2,7 +2,7 @@ use couch_rs::{document::TypedCouchDocument, error::CouchError, Client};
 use rand::{distributions::Alphanumeric, Rng};
 use tokio_util::sync::CancellationToken;
 
-pub trait CouchWrapper {
+pub trait CouchDBWrapper {
     fn new(uri: &str, username: &str, password: &str, db_name: &str) -> Self;
     fn client(&self) -> &Client;
     fn dbname(&self) -> &str;
@@ -35,14 +35,14 @@ impl TestRepoConfig {
     }
 }
 
-pub struct TestRepo<T: CouchWrapper> {
+pub struct TestRepo<T: CouchDBWrapper> {
     pub repo: T,
 
     drop_token: CancellationToken,
     dropped_token: CancellationToken,
 }
 
-impl<T: CouchWrapper> TestRepo<T> {
+impl<T: CouchDBWrapper> TestRepo<T> {
     pub async fn new(arg_cfg: TestRepoConfig) -> TestRepo<T> {
         // create random identifier for database and append to db name
         let test_identifier = rand::thread_rng()
@@ -138,9 +138,10 @@ impl<T: CouchWrapper> TestRepo<T> {
             Err(e) => log::error!("Error while cleaning up {}: {}", cfg.db_name, e),
         };
     }
+
 }
 
-impl<T: CouchWrapper> Drop for TestRepo<T> {
+impl<T: CouchDBWrapper> Drop for TestRepo<T> {
     fn drop(&mut self) {
         self.drop_token.cancel();
 
