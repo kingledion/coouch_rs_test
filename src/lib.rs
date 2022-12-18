@@ -22,27 +22,27 @@
 
 #![warn(missing_docs)]
 
-use couch_rs::{document::TypedCouchDocument, error::CouchError, Client};
+use std::error::Error;
+use couch_rs::{database::Database, document::TypedCouchDocument, error::CouchError, Client};
 use rand::{distributions::Alphanumeric, Rng};
 use tokio_util::sync::CancellationToken;
 
-/// A wrapper for a struct that manages on CouchDB database
-/// 
-/// This trait should be implemented on a struct that manages a CouchDB database, thus enabling that 
-/// struct to be used in [TestRepo]. 
-pub trait CouchDBWrapper {
-    /// Create a new instance of the underlying struct, by passing the sepcifications for the couch_rs
-    /// client and the name of the database.
-    fn wrap(uri: &str, username: &str, password: &str, db_name: &str) -> Self;
-    /// Return the underlying client
-    fn client(&self) -> &Client;
-    /// Return the underlying database name
-    fn dbname(&self) -> &str;
-}
+// /// A wrapper for a struct that manages on CouchDB database
+// /// 
+// /// This trait should be implemented on a struct that manages a CouchDB database, thus enabling that 
+// /// struct to be used in [TestRepo]. 
+// pub trait CouchDBWrapper {
+//     /// Create a new instance of the underlying struct, by passing the sepcifications for the couch_rs
+//     /// client and the name of the database.
+//     fn wrap(uri: &str, username: &str, password: &str, db_name: &str) -> Self;
+//     /// Return the underlying client
+//     fn client(&self) -> &Client;
+//     /// Return the underlying database name
+//     fn dbname(&self) -> &str;
+// }
 
-/// Configuration for [TestRepo]. This configuration is also passed to the underlying struct on which 
-/// [CouchDBWrapper] is implemented, in order to create a new [couch_rs::Client](https://docs.rs/couch_rs/latest/couch_rs/struct.Client.html) 
-/// and identify the associated database. 
+/// Configuration for [TestRepo]. This configuration is to create a new [couch_rs::Client](https://docs.rs/couch_rs/latest/couch_rs/struct.Client.html) 
+/// and name the associated [couch_rs::database::Database](https://docs.rs/couch_rs/latest/couch_rs/database/struct.Database.html). 
 #[derive(Clone)]
 pub struct TestRepoConfig {
     uri: String,
@@ -79,17 +79,17 @@ impl TestRepoConfig {
 /// Creation of a new instance of this struct will create a unique, associated CouchDB database. Internally,
 /// this struct implements a drop token and watcher to determine when this struct is de-allocated, thus
 /// triggering destruction of the associated CouchDB database. 
-pub struct TestRepo<T: CouchDBWrapper> {
+pub struct TestRepo {
     /// A struct that encapsulates the functionality of an application's data layer. Test using 
     /// this wrapper should call for this struct in order to perform test actions against this 
     /// TestRepo's ephemeral CouchDB database. 
-    pub repo: T,
+    pub db: Database,
 
     drop_token: CancellationToken,
     dropped_token: CancellationToken,
 }
 
-impl<T: CouchDBWrapper> TestRepo<T> {
+impl TestRepo {
     /// Creates a new instance of TestRepo wrapping a new instance of the type paramter (an implementation
     /// of [CouchDBWrapper]). This function will create a new [couch_rs::Client](https://docs.rs/couch_rs/latest/couch_rs/struct.Client.html)
     /// from the parameters passed
@@ -102,7 +102,7 @@ impl<T: CouchDBWrapper> TestRepo<T> {
     /// The watcher spawn an asynchronous thread that will observe the drop token every 100 milliseconds.
     /// when this instance is deallocated, the drop token is destroyed and the watcher will trigger the
     /// destruction of the database instance created by this method. 
-    pub async fn new(arg_cfg: TestRepoConfig) -> TestRepo<T> {
+    pub async fn new(arg_cfg: TestRepoConfig) -> Result<TestRepo, Box<dyn Error>> {
         // create random identifier for database and append to db name
         let test_identifier = rand::thread_rng()
             .sample_iter(&Alphanumeric)
@@ -114,17 +114,17 @@ impl<T: CouchDBWrapper> TestRepo<T> {
         let db_unique_name = format!("{}-{}", arg_cfg.db_name, test_identifier);
         let cfg = arg_cfg.with_name(db_unique_name);
 
-        let wrapped = T::wrap(&cfg.uri, &cfg.username, &cfg.password, &cfg.db_name);
+        let client = Client::new(&cfg.uri, &cfg.username, &cfg.password)?;
+
 
         let drop_token = CancellationToken::new();
-        let dropped_token = TestRepo::<T>::start_drop_watcher(&drop_token, cfg.clone()).await;
+        let dropped_token = TestRepo::start_drop_watcher(&drop_token, cfg.clone()).await;
 
         // connect to database and return wrapping repository
         log::info!("Creating database {} for testing", cfg.db_name);
 
         // create test database - panic on fail
-        let c = wrapped.client();
-        match c.make_db(&cfg.db_name).await {
+        match client.make_db(&cfg.db_name).await {
             Ok(_) => {}
             Err(e) => {
                 match e.status() {
@@ -146,11 +146,11 @@ impl<T: CouchDBWrapper> TestRepo<T> {
             }
         };
 
-        TestRepo {
-            repo: wrapped,
+        Ok(TestRepo {
+            db: client.db(&cfg.db_name).await?,
             drop_token: drop_token,
             dropped_token: dropped_token,
-        }
+        })
     }
 
     /// Pushes data to the unique database associated with this instance. Data is pushed via the 
@@ -160,8 +160,7 @@ impl<T: CouchDBWrapper> TestRepo<T> {
         &self,
         data: &mut [S],
     ) -> Result<usize, CouchError> {
-        let db = self.repo.client().db(&self.repo.dbname()).await?;
-        let result = db.bulk_docs(data).await?;
+        let result = self.db.bulk_docs(data).await?;
         return Ok(result.len());
     }
 
@@ -179,7 +178,7 @@ impl<T: CouchDBWrapper> TestRepo<T> {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
 
-            TestRepo::<T>::drop(cfg).await;
+            TestRepo::drop(cfg).await;
 
             dropped_token.cancel();
         });
@@ -203,7 +202,7 @@ impl<T: CouchDBWrapper> TestRepo<T> {
 
 }
 
-impl<T: CouchDBWrapper> Drop for TestRepo<T> {
+impl Drop for TestRepo {
     fn drop(&mut self) {
         self.drop_token.cancel();
 
