@@ -1,7 +1,12 @@
 [package]
 name = "couch_rs_test"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+license = "MIT"
+description = "Tools for testing a CouchDB repository implemented in Rust with couch_rs."
+repository = "https://github.com/kingledion/couch_rs_test"
+readme = "README.md"
+keywords = ["couchdb", "testing"]
 
 [dependencies]
 http = "0.2"
