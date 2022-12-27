@@ -4,21 +4,43 @@
 //! CouchDB instance. For a given database name, the created databases append a random string to guarantee
 //! uniqueness of multiple tests in parallel in the same CouchDB instance. 
 //! 
-//! In a 'data layer' application model, there is a discrete structure that is used to represent the data
-//! layer of an application. When using this package, that data layer is a CouchDB instance. Advanced 
-//! functionality can be built into the data layer by implementing methods on the data layer struct. A 
-//! example use is defining a commonly used but complex query as a method. 
+//! ```rust
+//! use serde_json::json;
+//! use couch_rs_test::{TestRepo, TestRepoConfig};
 //! 
-//! If the data layer application model is used, a helper trait [CouchDBWrapper] can be applied to the data 
-//! layer struct; this struct would wraps a [couch_rs::Client](https://docs.rs/couch_rs/latest/couch_rs/struct.Client.html) 
-//! and the name of a database to use. For testing, 
-//! implementing the [CouchDBWrapper] trait allows it to be wrapped in the [TestRepo] class
-//! to provide automatic creationg and destruction of tables during integration tests. 
+//! async fn new_database(
+//!     config_uri: &str,
+//!     config_username: &str,
+//!     config_password: &str,
+//!     config_dbname: &str,
+//! ) -> TestRepo {
 //! 
-//! The struct against which [CouchDBWrapper] is implemented should only refer to a single CouchDB database.
-//! Even though the primary interface is the [couch_rs::Client](https://docs.rs/couch_rs/latest/couch_rs/struct.Client.html), 
-//! and not the couch_rs database, the automatic 
-//! creation and destruction implies that only one underlying database is managed by one struct. 
+//!     let repo: TestRepo = match TestRepo::new(
+//!         TestRepoConfig::new(
+//!             config_uri,
+//!             config_username,
+//!             config_password,
+//!             config_dbname,
+//!         )
+//!     ).await {
+//!         Ok(r) => r,
+//!         // if db creation fails, test will fail, so just panic
+//!         Err(e) => panic!("Failed to create test database: {}", e), 
+//!     };
+//! 
+//!     // write test data into the newly created database
+//!     let data = &mut vec!{
+//!         json!{{"some": "data"}},
+//!         json!{{"some": "other-data"}}
+//!     };
+//! 
+//!     match repo.with_data(data).await {
+//!         Ok(cnt) => log::info!("Added {} entries to test database {}", cnt, repo.db.name()),
+//!         Err(e) => panic!("Failed to set up database: {}", e),
+//!     };
+//!     repo
+//! }
+//! ```
 
 #![warn(missing_docs)]
 
@@ -26,20 +48,6 @@ use std::error::Error;
 use couch_rs::{database::Database, document::TypedCouchDocument, error::CouchError, Client};
 use rand::{distributions::Alphanumeric, Rng};
 use tokio_util::sync::CancellationToken;
-
-// /// A wrapper for a struct that manages on CouchDB database
-// /// 
-// /// This trait should be implemented on a struct that manages a CouchDB database, thus enabling that 
-// /// struct to be used in [TestRepo]. 
-// pub trait CouchDBWrapper {
-//     /// Create a new instance of the underlying struct, by passing the sepcifications for the couch_rs
-//     /// client and the name of the database.
-//     fn wrap(uri: &str, username: &str, password: &str, db_name: &str) -> Self;
-//     /// Return the underlying client
-//     fn client(&self) -> &Client;
-//     /// Return the underlying database name
-//     fn dbname(&self) -> &str;
-// }
 
 /// Configuration for [TestRepo]. This configuration is to create a new [couch_rs::Client](https://docs.rs/couch_rs/latest/couch_rs/struct.Client.html) 
 /// and name the associated [couch_rs::database::Database](https://docs.rs/couch_rs/latest/couch_rs/database/struct.Database.html). 
@@ -52,8 +60,8 @@ pub struct TestRepoConfig {
 }
 
 impl TestRepoConfig {
-    /// Create a new configuration; identifying the uri, username and password for the CouchDB instance as
-    /// well as the database name.
+    /// Create a new configuration; identifying the uri, username and password for the CouchDB client
+    /// instance as well as the database name for the underlying database. 
     pub fn new(uri: &str, uname: &str, pwd: &str, dbname: &str) -> TestRepoConfig {
         TestRepoConfig {
             uri: uri.to_string(),
@@ -73,15 +81,12 @@ impl TestRepoConfig {
 
 /// A wrapper for a struct that encapsulates functionality of an application's data layer. 
 /// 
-/// The type parameter is the type of the data layer struct to be wrapped. The data layer struct must 
-/// implement the [CouchDBWrapper] trait. 
-/// 
-/// Creation of a new instance of this struct will create a unique, associated CouchDB database. Internally,
-/// this struct implements a drop token and watcher to determine when this struct is de-allocated, thus
-/// triggering destruction of the associated CouchDB database. 
+/// Creation of a new instance of this struct will create a unique [couch_rs::database::Database](https://docs.rs/couch_rs/latest/couch_rs/database/struct.Database.html). 
+/// Internally, this struct implements a drop token and watcher to determine when this struct is de-allocated, 
+/// thus triggering destruction of the associated CouchDB database. 
 pub struct TestRepo {
-    /// A struct that encapsulates the functionality of an application's data layer. Test using 
-    /// this wrapper should call for this struct in order to perform test actions against this 
+    /// A [couch_rs::database::Database](https://docs.rs/couch_rs/latest/couch_rs/database/struct.Database.html). 
+    /// Tests using this wrapper should access this struct in order to perform test actions against this 
     /// TestRepo's ephemeral CouchDB database. 
     pub db: Database,
 
@@ -90,13 +95,12 @@ pub struct TestRepo {
 }
 
 impl TestRepo {
-    /// Creates a new instance of TestRepo wrapping a new instance of the type paramter (an implementation
-    /// of [CouchDBWrapper]). This function will create a new [couch_rs::Client](https://docs.rs/couch_rs/latest/couch_rs/struct.Client.html)
-    /// from the parameters passed
-    /// as part of the [TestRepoConfig] argument. It will then create a new database in CouchDB using the 
-    /// client connection and a database name consisting of the name defined in config plus a random suffix.
-    /// This randomization of database names helps prevent collisions during parallel test runs against 
-    /// the same CouchDB instance. 
+    /// Creates a new instance of TestRepo wrapping a new instance of [couch_rs::database::Database](https://docs.rs/couch_rs/latest/couch_rs/database/struct.Database.html). 
+    /// This function will create a new [couch_rs::Client](https://docs.rs/couch_rs/latest/couch_rs/struct.Client.html)
+    /// from the parameters passed as part of the [TestRepoConfig] argument and  then create a new database 
+    /// in CouchDB using the client connection and a database name consisting of the name defined in config 
+    /// plus a random suffix.This randomization of database names helps prevent collisions during parallel 
+    /// test excutions against the same CouchDB instance. 
     /// 
     /// This function also creates a drop token and watcher to determine when this instance is de-allocated
     /// The watcher spawn an asynchronous thread that will observe the drop token every 100 milliseconds.
