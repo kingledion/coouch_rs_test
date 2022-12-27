@@ -49,7 +49,9 @@ use couch_rs::{database::Database, document::TypedCouchDocument, error::CouchErr
 use rand::{distributions::Alphanumeric, Rng};
 use tokio_util::sync::CancellationToken;
 
-/// Configuration for [TestRepo]. This configuration is to create a new [couch_rs::Client](https://docs.rs/couch_rs/latest/couch_rs/struct.Client.html) 
+/// Configuration for [TestRepo]. 
+/// 
+/// This configuration is to create a new [couch_rs::Client](https://docs.rs/couch_rs/latest/couch_rs/struct.Client.html) 
 /// and name the associated [couch_rs::database::Database](https://docs.rs/couch_rs/latest/couch_rs/database/struct.Database.html). 
 #[derive(Clone)]
 pub struct TestRepoConfig {
